@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Workshop Desk</title>
+<style>
+body { max-width: 620px; margin: 2rem auto; padding: 0 1rem; background: #f2ebd2; color: #252114; font: 1rem system-ui; }
+article, form { border: 2px solid #514734; padding: .8rem; margin: .7rem 0; }
+input, button { font: inherit; padding: .35rem; }
+h1 { background: #493a22; color: white; padding: .5rem; }
+</style>
+<main>
+<h1>Workshop Desk</h1>
+<p>Book a seat at the neighborhood makerspace.</p>
+<form id="search"><label>Find a class <input name="q"></label> <button>Search</button></form>
+<section id="results" aria-label="Workshops"></section>
+<nav aria-label="Workshop pages"><button id="prev">Previous</button> <span id="page"></span> <button id="next">Next</button></nav>
+<form id="booking">
+  <label>Workshop ID <input name="workshop_id" type="number" required></label>
+  <label>Seats <input name="quantity" type="number" value="1" required></label>
+  <button>Reserve</button>
+  <button type="button" id="retry" disabled>Retry last request</button>
+</form>
+<p id="status" role="status"></p>
+</main>
+<script>
+const search = document.querySelector('#search');
+const booking = document.querySelector('#booking');
+const statusLine = document.querySelector('#status');
+const retry = document.querySelector('#retry');
+let page = 1;
+let query = '';
+let last;
+const dollars = cents => new Intl.NumberFormat('en-US', {style: 'currency', currency: 'USD'}).format(cents / 100);
+
+async function load() {
+  const result = await fetch('/api/workshops?' + new URLSearchParams({q: query, page}));
+  const rows = await result.json();
+  document.querySelector('#results').replaceChildren(...rows.map(row => {
+    const card = document.createElement('article');
+    const title = document.createElement('strong');
+    title.textContent = row.title;
+    const details = document.createElement('p');
+    details.textContent = dollars(row.price_cents) + ' per seat · ' + row.seats + ' remaining';
+    const choose = document.createElement('button');
+    choose.textContent = 'Choose';
+    choose.onclick = () => { booking.elements.workshop_id.value = row.id; };
+    card.append(title, details, choose);
+    return card;
+  }));
+  document.querySelector('#page').textContent = 'Page ' + page;
+  document.querySelector('#prev').disabled = page === 1;
+  document.querySelector('#next').disabled = rows.length < 2;
+}
+
+async function send(request) {
+  const result = await fetch('/api/bookings', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json', 'Idempotency-Key': request.id},
+    body: JSON.stringify(request.body)
+  });
+  const data = await result.json();
+  statusLine.textContent = result.ok
+    ? 'Booking #' + data.id + ' confirmed for ' + dollars(data.total_cents)
+    : data.error;
+  await load();
+}
+
+search.onsubmit = event => {
+  event.preventDefault();
+  query = search.elements.q.value;
+  page = 1;
+  load().catch(showError);
+};
+document.querySelector('#prev').onclick = () => { page--; load().catch(showError); };
+document.querySelector('#next').onclick = () => { page++; load().catch(showError); };
+booking.onsubmit = event => {
+  event.preventDefault();
+  last = {id: crypto.randomUUID(), body: {
+    workshop_id: booking.elements.workshop_id.valueAsNumber,
+    quantity: booking.elements.quantity.valueAsNumber
+  }};
+  retry.disabled = false;
+  send(last).catch(showError);
+};
+retry.onclick = () => send(last).catch(showError);
+function showError() { statusLine.textContent = 'Could not reach the booking desk.'; }
+load().catch(showError);
+</script>
+</html>
